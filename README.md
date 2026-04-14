@@ -1,38 +1,36 @@
 # Shopify Pickup Webhook Handler
 
-A PHP webhook handler that processes Shopify `orders/create` events and enriches orders with pickup point data from the Pickup Point Generator.
+A PHP webhook handler for processing Shopify `orders/create` events. When an order comes in with a pickup point attached, it extracts the pickup details and writes them back to the order in three places so downstream fulfilment systems have what they need.
 
 ## What it does
 
-When an order is created with a pickup point selected, this handler:
-
-1. Validates the webhook signature (HMAC)
-2. Queries the Shopify GraphQL API (unstable) to extract the pickup point `externalId`
-3. Parses the `externalId` format: `<COURIER>-<METHOD>-<BRANCHCODE>`
-4. Updates the order in three places:
-   - Shipping line title: `"Ackermans - EXPRESS - 1569"`
-   - Metafields: `delivery.method` and `delivery.branch_code`
-   - Tags: `delivery:express`, `branch:1569`, `click-and-collect-express`
+1. Validates the webhook signature to confirm the request came from Shopify
+2. Queries the GraphQL API (unstable branch) to pull the pickup point `externalId`
+3. Parses the `externalId` — format is `<COURIER>-<METHOD>-<BRANCHCODE>`
+4. Updates the order with the structured data:
+   - Shipping line title updated to e.g. `Ackermans - EXPRESS - 1569`
+   - Two metafields written: `delivery.method` and `delivery.branch_code`
+   - Three tags added for easy filtering in Shopify Admin
 
 ## Project structure
 shopify-pickup-handler/
-├── index.php                 — Webhook entry point
+├── index.php                 — Entry point, handles the incoming webhook
 ├── src/
-│   ├── Config.php            — Loads .env and defines constants
-│   ├── Logger.php            — File-based logger
+│   ├── Config.php            — Reads .env and sets up constants
+│   ├── Logger.php            — Writes to logs/app.log
 │   ├── ShopifyClient.php     — GraphQL client and query functions
-│   ├── PickupPointParser.php — Parses and formats externalId
-│   └── OrderUpdater.php      — Handles all three order mutations
+│   ├── PickupPointParser.php — Parses externalId and builds title/tags
+│   └── OrderUpdater.php      — Runs the three order mutations
 ├── logs/
 │   └── app.log               — Runtime logs (gitignored)
-├── .env                      — Local credentials (gitignored)
+├── .env                      — Your credentials (gitignored)
 └── .env.example              — Credential template
 
 ## Requirements
 
 - PHP 8.1+
-- cURL extension
-- Shopify custom app with scopes:
+- cURL extension enabled
+- Shopify custom app with these scopes:
   - `read_orders`, `write_orders`
   - `read_fulfillments`, `write_fulfillments`
   - `write_order_edits`
@@ -45,12 +43,12 @@ git clone https://github.com/shaqielh/shopify-pickup-webhook.git
 cd shopify-pickup-webhook
 ```
 
-**2. Configure credentials**
+**2. Set up credentials**
 ```bash
 cp .env.example .env
 ```
 
-Fill in `.env`:
+Open `.env` and fill in your values:
 SHOPIFY_STORE_DOMAIN=your-store.myshopify.com
 SHOPIFY_ADMIN_API_TOKEN=shpat_xxxxxxxxxxxxxxxxxxxxx
 SHOPIFY_WEBHOOK_SECRET=xxxxxxxxxxxxxxxxxxxxx
@@ -64,14 +62,14 @@ LOG_PATH=logs/app.log
 php -S localhost:8000
 ```
 
-**4. Expose with ngrok**
+**4. Expose it publicly with ngrok**
 ```bash
 ngrok http 8000
 ```
 
-**5. Register webhook in Shopify**
+**5. Register the webhook in Shopify**
 
-Admin → Settings → Notifications → Webhooks → Create webhook
+Admin > Settings > Notifications > Webhooks > Create webhook
 
 | Field | Value |
 |---|---|
@@ -80,10 +78,10 @@ Admin → Settings → Notifications → Webhooks → Create webhook
 | URL | `https://your-ngrok-url/index.php` |
 | API version | 2026-04 |
 
-## API version strategy
+## A note on API versions
 
-Two versions are used intentionally. The unstable API is required to query `deliveryOptionGeneratorPickupPoint.externalId` on the fulfillment order — this field does not exist in any stable version. All order mutations use the stable API so downstream systems reading order data get consistent results.
+Two versions are used on purpose. The pickup point field (`deliveryOptionGeneratorPickupPoint.externalId`) only exists in the unstable API — it is not available in any stable release yet. All mutations that write back to the order use the stable API (`2026-04`) so that other systems reading order data get consistent results.
 
 ## Logging
 
-Logs write to `logs/app.log`. Set `LOG_LEVEL=debug` in `.env` during development to see full request details.
+Everything gets logged to `logs/app.log`. During development, `LOG_LEVEL=debug` in `.env` will log the full parsed pickup data. Switch to `info` in production to keep things tidy.
